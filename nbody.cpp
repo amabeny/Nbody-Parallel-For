@@ -2,13 +2,16 @@
 #include <fstream>
 #include <random>
 #include <cmath>
+#include <vector>
+#include <string>
+#include <cstdlib>
 
 double G = 6.674*std::pow(10,-11);
 //double G = 1;
 
 struct simulation {
   size_t nbpart;
-  
+
   std::vector<double> mass;
 
   //position
@@ -26,7 +29,7 @@ struct simulation {
   std::vector<double> fy;
   std::vector<double> fz;
 
-  
+
   simulation(size_t nb)
     :nbpart(nb), mass(nb),
      x(nb), y(nb), z(nb),
@@ -50,7 +53,7 @@ void random_init(simulation& s) {
     s.y[i] = dispos(gen);
     s.z[i] = dispos(gen);
     s.z[i] = 0.;
-    
+
     s.vx[i] = disvel(gen);
     s.vy[i] = disvel(gen);
     s.vz[i] = disvel(gen);
@@ -76,7 +79,7 @@ void random_init(simulation& s) {
     s.vy[i] -= meanmassvy/meanmass;
     s.vz[i] -= meanmassvz/meanmass;
   }
-  
+
 }
 
 void init_solar(simulation& s) {
@@ -120,7 +123,7 @@ void update_force(simulation& s, size_t from, size_t to) {
   double dy = s.y[from]-s.y[to];
   double dz = s.z[from]-s.z[to];
   double norm = std::sqrt(dx*dx+dy*dy+dz*dz);
-  
+
   dx = dx/norm;
   dy = dy/norm;
   dz = dz/norm;
@@ -131,18 +134,17 @@ void update_force(simulation& s, size_t from, size_t to) {
   s.fz[to] += dz*F;
 }
 
+
 void reset_force(simulation& s) {
-  for (size_t i=0; i<s.nbpart; ++i) {
-    s.fx[i] = 0.;
-    s.fy[i] = 0.;
-    s.fz[i] = 0.;
-  }
+  std::fill(s.fx.begin(), s.fx.end(), 0.);
+  std::fill(s.fy.begin(), s.fy.end(), 0.);
+  std::fill(s.fz.begin(), s.fz.end(), 0.);
 }
 
 void apply_force(simulation& s, size_t i, double dt) {
-  s.vx[i] += s.fx[i]/s.mass[i]*dt;
-  s.vy[i] += s.fy[i]/s.mass[i]*dt;
-  s.vz[i] += s.fz[i]/s.mass[i]*dt;
+  s.vx[i] += s.fx[i] / s.mass[i] * dt;
+  s.vy[i] += s.fy[i] / s.mass[i] * dt;
+  s.vz[i] += s.fz[i] / s.mass[i] * dt;
 }
 
 void update_position(simulation& s, size_t i, double dt) {
@@ -187,12 +189,12 @@ int main(int argc, char* argv[]) {
       <<"a filename (load from file in singleline tsv)"<<"\n";
     return -1;
   }
-  
+
   double dt = std::atof(argv[2]); //in seconds
   size_t nbstep = std::atol(argv[3]);
   size_t printevery = std::atol(argv[4]);
-  
-  
+
+
   simulation s(1);
 
   //parse command line
@@ -204,32 +206,57 @@ int main(int argc, char* argv[]) {
     } else {
       std::string inputparam = argv[1];
       if (inputparam == "planet") {
-	init_solar(s);
+  init_solar(s);
       } else{
-	load_from_file(s, inputparam);
+  load_from_file(s, inputparam);
       }
     }    
   }
 
-  
+
   for (size_t step = 0; step< nbstep; step++) {
     if (step %printevery == 0)
       dump_state(s);
-  
+
     reset_force(s);
-    for (size_t i=0; i<s.nbpart; ++i)
-      for (size_t j=0; j<s.nbpart; ++j)
-	if (i != j)
-	  update_force(s, i, j);
 
-    for (size_t i=0; i<s.nbpart; ++i) {
-      apply_force(s, i, dt);
-      update_position(s, i, dt);
+        // openMP parallel force 
+        #pragma omp parallel for schedule(dynamic)
+        for (size_t i = 0; i < s.nbpart; ++i) {
+          for (size_t j = 0; j < s.nbpart; ++j) {
+            if (i != j) {
+              double dx = s.x[i] - s.x[j];
+              double dy = s.y[i] - s.y[j];
+              double dz = s.z[i] - s.z[j];
+              double dist_sq = dx*dx + dy*dy + dz*dz + 0.1;
+              double dist = std::sqrt(dist_sq);
+              double F = G * s.mass[i] * s.mass[j] / dist_sq;
+
+              double fx = dx / dist * F;
+              double fy = dy / dist * F;
+              double fz = dz / dist * F;
+
+              #pragma omp atomic
+              s.fx[j] += fx;
+              #pragma omp atomic
+              s.fy[j] += fy;
+              #pragma omp atomic
+              s.fz[j] += fz;
+            }
+          }
+        }
+
+        // openMP parallel velocity
+        #pragma omp parallel for
+        for (size_t i = 0; i < s.nbpart; ++i)
+          apply_force(s, i, dt);
+
+        // openMP parallel position 
+        #pragma omp parallel for
+        for (size_t i = 0; i < s.nbpart; ++i)
+          update_position(s, i, dt);
+      }
+
+      return 0;
     }
-  }
-  
-  //dump_state(s);  
 
-
-  return 0;
-}
