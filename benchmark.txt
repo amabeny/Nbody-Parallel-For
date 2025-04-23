@@ -1,1 +1,9 @@
-OMP_NUM_THREADS=4 - solar system took X seconds
+Solar System Simulation
+Input: planet, dt = 200, steps = 5,000,000
+OMP_NUM_THREADS=4
+-> Time: 3.540 seconds
+
+Random N-Body Simulation
+Input: 1000 particles, dt = 1, steps = 10,000
+OMP_NUM_THREADS=4
+-> Time: 63.124 seconds
